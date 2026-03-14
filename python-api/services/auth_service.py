@@ -16,6 +16,9 @@ security = HTTPBearer()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    # PHP bcrypt uses $2y$, Python expects $2b$ — both are compatible
+    if hashed_password.startswith("$2y$"):
+        hashed_password = "$2b$" + hashed_password[4:]
     return pwd_context.verify(plain_password, hashed_password)
 
 
