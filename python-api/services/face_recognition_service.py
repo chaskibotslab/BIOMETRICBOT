@@ -236,6 +236,9 @@ class FaceRecognitionService:
         best_sim = -1
 
         for emp_id, known_enc in known_encodings:
+            if known_enc.shape[0] != 512:
+                print(f"  - {emp_id[:8]}...: SKIP (dim={known_enc.shape[0]}, necesita re-registro)")
+                continue
             sim = self.cosine_similarity(known_enc, result.encoding)
             print(f"  - {emp_id[:8]}...: {sim:.4f} ({sim * 100:.1f}%)")
 
@@ -243,7 +246,7 @@ class FaceRecognitionService:
                 best_sim = sim
                 best_id = emp_id
 
-        confidence = float(best_sim * 100)
+        confidence = float(best_sim * 100) if best_sim > 0 else 0.0
 
         print(f"\n[RESULTADO] Mejor: {best_id[:8] if best_id else 'ninguno'}")
         print(f"[RESULTADO] Similitud: {best_sim:.4f} ({confidence:.1f}%)")
@@ -271,7 +274,25 @@ class FaceRecognitionService:
 
     @staticmethod
     def deserialize_encoding(data: bytes) -> np.ndarray:
-        return np.frombuffer(data, dtype=np.float32)
+        # Try new format first (numpy float32 tobytes — 512 * 4 = 2048 bytes)
+        arr = np.frombuffer(data, dtype=np.float32)
+        if arr.shape[0] == 512:
+            return arr.copy()
+        # Try float64 (in case stored differently)
+        arr64 = np.frombuffer(data, dtype=np.float64)
+        if arr64.shape[0] == 512:
+            return arr64.astype(np.float32).copy()
+        # Fallback: try pickle (old format from legacy system)
+        try:
+            import pickle
+            arr_pickle = pickle.loads(data)
+            if hasattr(arr_pickle, 'shape'):
+                flat = np.array(arr_pickle, dtype=np.float32).flatten()
+                return flat
+        except Exception:
+            pass
+        # Return whatever we got
+        return arr.copy()
 
     def get_face_thumbnail(self, image_base64: str, face_location: Tuple, size: Tuple[int, int] = (200, 200)) -> str:
         try:
