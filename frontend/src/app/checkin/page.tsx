@@ -11,6 +11,7 @@ interface GeoLocation {
 
 export default function CheckinPage() {
   const [location, setLocation] = useState<GeoLocation | null>(null);
+  const [gpsError, setGpsError] = useState("");
   const [cameraReady, setCameraReady] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [result, setResult] = useState<CheckInResponse | null>(null);
@@ -43,12 +44,16 @@ export default function CheckinPage() {
   async function initCamera() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: 640, height: 480 },
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute("playsinline", "true");
+        videoRef.current.setAttribute("muted", "true");
         videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play();
           if (canvasRef.current && videoRef.current) {
             canvasRef.current.width = videoRef.current.videoWidth;
             canvasRef.current.height = videoRef.current.videoHeight;
@@ -57,12 +62,37 @@ export default function CheckinPage() {
         };
       }
     } catch {
-      alert("No se pudo acceder a la camara. Verifica los permisos.");
+      alert("No se pudo acceder a la camara. Verifica los permisos en Ajustes > Safari > Camara.");
     }
   }
 
   function initGPS() {
-    if (!navigator.geolocation) return;
+    if (!navigator.geolocation) {
+      setGpsError("GPS no disponible");
+      return;
+    }
+    // First try getCurrentPosition for iOS (faster permission prompt)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocation({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          acc: pos.coords.accuracy,
+        });
+        setGpsError("");
+      },
+      (err) => {
+        if (err.code === 1) {
+          setGpsError("Permiso denegado. Activa ubicacion en Ajustes.");
+        } else if (err.code === 2) {
+          setGpsError("GPS no disponible");
+        } else {
+          setGpsError("Obteniendo ubicacion...");
+        }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+    );
+    // Then watch for updates
     navigator.geolocation.watchPosition(
       (pos) => {
         setLocation({
@@ -70,9 +100,15 @@ export default function CheckinPage() {
           lon: pos.coords.longitude,
           acc: pos.coords.accuracy,
         });
+        setGpsError("");
       },
-      () => {},
-      { enableHighAccuracy: true, timeout: 10000 }
+      (err) => {
+        if (!location) {
+          if (err.code === 1) setGpsError("Permiso denegado. Activa ubicacion en Ajustes.");
+          else setGpsError("Error GPS. Reintentando...");
+        }
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 }
     );
   }
 
@@ -85,7 +121,7 @@ export default function CheckinPage() {
   }, []);
 
   const doCheckin = async (tipo: "entrada" | "salida") => {
-    if (!cameraReady || !location) return;
+    if (!cameraReady) return;
     setProcessing(true);
     setShowResult(false);
 
@@ -93,9 +129,9 @@ export default function CheckinPage() {
       const img = capture();
       const res = await realizarCheckin({
         imagen_base64: img,
-        latitud: location.lat,
-        longitud: location.lon,
-        precision_gps: location.acc,
+        latitud: location?.lat ?? 0,
+        longitud: location?.lon ?? 0,
+        precision_gps: location?.acc ?? 9999,
         tipo_registro: tipo,
         dispositivo_id: "pwa_" + Date.now(),
       });
@@ -119,7 +155,7 @@ export default function CheckinPage() {
     }
   };
 
-  const ready = cameraReady && location;
+  const ready = cameraReady;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#1e3a5f] to-[#0f172a] text-white">
@@ -132,7 +168,7 @@ export default function CheckinPage() {
 
         {/* Camera */}
         <div className="bg-black rounded-2xl overflow-hidden relative aspect-[3/4] max-h-[400px] mb-4">
-          <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+          <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
           <canvas ref={canvasRef} className="hidden" />
           <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-44 h-56 border-3 rounded-[50%] transition-colors ${ready ? "border-green-400 border-solid" : "border-white/40 border-dashed"}`} />
         </div>
@@ -141,7 +177,7 @@ export default function CheckinPage() {
         <div className="bg-white/10 rounded-xl p-4 mb-4 text-sm">
           <div className="flex justify-between mb-2">
             <span className="text-gray-300">Ubicacion:</span>
-            <span>{location ? "OK" : "Obteniendo..."}</span>
+            <span>{location ? "OK" : (gpsError || "Obteniendo...")}</span>
           </div>
           <div className="flex justify-between mb-2">
             <span className="text-gray-300">Lat:</span>
