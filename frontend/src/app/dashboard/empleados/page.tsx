@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getEmpleados, getEmpresas, createEmpleado, updateEmpleado, Empleado, Empresa } from "@/lib/api";
+import { getEmpleados, getEmpresas, createEmpleado, updateEmpleado, deleteEmpleado, Empleado, Empresa } from "@/lib/api";
 import { getAuth } from "@/lib/auth";
 
 const emptyForm = { numero_empleado: "", nombre: "", apellido_paterno: "", apellido_materno: "", email: "", puesto: "" };
@@ -52,6 +52,21 @@ export default function EmpleadosPage() {
     });
     setError("");
     setShowModal(true);
+  }
+
+  async function handleDelete(emp: Empleado) {
+    if (!confirm(`Eliminar a ${emp.nombre} ${emp.apellido_paterno}? Se eliminaran tambien sus datos biometricos y registros de asistencia.`)) return;
+    const auth = getAuth();
+    if (!auth) return;
+    try {
+      await deleteEmpleado(emp.id, auth.token);
+      setSuccess("Empleado eliminado correctamente");
+      loadData();
+      setTimeout(() => setSuccess(""), 3000);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Error al eliminar");
+      setTimeout(() => setError(""), 3000);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -160,12 +175,18 @@ export default function EmpleadosPage() {
                       </a>
                     )}
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-6 py-4 space-x-3">
                     <button
                       onClick={() => openEdit(emp)}
                       className="text-blue-600 hover:text-blue-800 text-sm font-medium"
                     >
                       Editar
+                    </button>
+                    <button
+                      onClick={() => handleDelete(emp)}
+                      className="text-red-500 hover:text-red-700 text-sm font-medium"
+                    >
+                      Eliminar
                     </button>
                   </td>
                 </tr>

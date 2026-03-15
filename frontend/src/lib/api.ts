@@ -123,6 +123,10 @@ export function updateEmpleado(id: string, data: {
   return apiFetch<Empleado>(`/api/empleados/${id}`, { method: "PUT", body: data, token });
 }
 
+export function deleteEmpleado(id: string, token: string) {
+  return apiFetch<{ message: string }>(`/api/empleados/${id}`, { method: "DELETE", token });
+}
+
 // Biometrico
 export interface RegistroBiometricoResponse {
   success: boolean;

@@ -268,6 +268,23 @@ async def editar_empleado(empleado_id: UUID, data: EmpleadoUpdate, db: Session =
     )
 
 
+@app.delete("/api/empleados/{empleado_id}", tags=["Empleados"])
+async def eliminar_empleado(empleado_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    empleado = db.query(Empleado).filter(Empleado.id == empleado_id).first()
+    if not empleado:
+        raise HTTPException(404, "Empleado no encontrado")
+
+    # Eliminar datos biometricos asociados
+    db.query(DatoBiometrico).filter(DatoBiometrico.empleado_id == empleado_id).delete()
+    # Eliminar registros de asistencia asociados
+    db.query(RegistroAsistencia).filter(RegistroAsistencia.empleado_id == empleado_id).delete()
+    # Eliminar empleado
+    db.delete(empleado)
+    db.commit()
+
+    return {"message": f"Empleado {empleado.nombre} {empleado.apellido_paterno} eliminado correctamente"}
+
+
 # ========================================
 # REGISTRO BIOMÉTRICO
 # ========================================
