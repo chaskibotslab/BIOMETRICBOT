@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Check-In Biométrico</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: linear-gradient(135deg, #1e3a5f, #0f172a); min-height: 100vh; color: white; }
+        .container { max-width: 480px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; padding: 20px 0; }
+        .header h1 { font-size: 24px; }
+        .camera-box { background: #000; border-radius: 16px; overflow: hidden; position: relative; aspect-ratio: 3/4; max-height: 400px; }
+        #video { width: 100%; height: 100%; object-fit: cover; }
+        #canvas { display: none; }
+        .face-guide { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 180px; height: 230px; border: 3px dashed rgba(255,255,255,0.5); border-radius: 50%; }
+        .face-guide.ready { border-color: #10b981; border-style: solid; }
+        .location-box { background: rgba(255,255,255,0.1); border-radius: 12px; padding: 16px; margin: 16px 0; }
+        .location-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; }
+        .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+        .btn { padding: 16px; border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; }
+        .btn-entrada { background: #10b981; color: white; }
+        .btn-salida { background: #ef4444; color: white; }
+        .btn:disabled { opacity: 0.5; }
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); align-items: center; justify-content: center; z-index: 100; }
+        .modal.show { display: flex; }
+        .modal-box { background: white; border-radius: 20px; padding: 32px; max-width: 340px; text-align: center; color: #333; }
+        .modal-icon { font-size: 60px; margin-bottom: 16px; }
+        .modal-btn { width: 100%; padding: 14px; background: #2563eb; color: white; border: none; border-radius: 10px; font-size: 16px; margin-top: 16px; cursor: pointer; }
+        .spinner { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; z-index: 99; }
+        .spinner.show { display: flex; }
+        .spinner-icon { width: 50px; height: 50px; border: 4px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏢 Check-In</h1>
+            <p id="datetime">Cargando...</p>
+        </div>
+        
+        <div class="camera-box">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas"></canvas>
+            <div class="face-guide" id="faceGuide"></div>
+        </div>
+        
+        <div class="location-box">
+            <div class="location-row"><span>📍 Ubicación:</span><span id="locStatus">Obteniendo...</span></div>
+            <div class="location-row"><span>Lat:</span><span id="lat">--</span></div>
+            <div class="location-row"><span>Lon:</span><span id="lon">--</span></div>
+            <div class="location-row"><span>Precisión:</span><span id="acc">--</span></div>
+        </div>
+        
+        <div class="buttons">
+            <button class="btn btn-entrada" id="btnEntrada" disabled>➡️ Entrada</button>
+            <button class="btn btn-salida" id="btnSalida" disabled>⬅️ Salida</button>
+        </div>
+    </div>
+    
+    <div class="spinner" id="spinner"><div class="spinner-icon"></div></div>
+    
+    <div class="modal" id="modal">
+        <div class="modal-box">
+            <div class="modal-icon" id="modalIcon">✅</div>
+            <h3 id="modalTitle">Resultado</h3>
+            <p id="modalMsg">Mensaje</p>
+            <p id="modalDetails"></p>
+            <button class="modal-btn" onclick="closeModal()">Cerrar</button>
+        </div>
+    </div>
+
+    <script>
+        // ⚠️ CAMBIA ESTA IP POR LA DE TU PC (ver con ipconfig en CMD)
+        const API_URL = 'http://localhost:8000/api';
+        
+        let location = null;
+        let stream = null;
+        
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Fecha y hora
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('datetime').textContent = now.toLocaleDateString('es', {weekday:'long', day:'numeric', month:'long', hour:'2-digit', minute:'2-digit'});
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+        
+        // Cámara
+        async function initCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'user', width: 640, height: 480}});
+                video.srcObject = stream;
+                video.onloadedmetadata = () => { canvas.width = video.videoWidth; canvas.height = video.videoHeight; };
+            } catch(e) { alert('Error cámara: ' + e); }
+        }
+        
+        // GPS
+        function initGPS() {
+            if (!navigator.geolocation) { alert('GPS no disponible'); return; }
+            navigator.geolocation.watchPosition(
+                pos => {
+                    location = {lat: pos.coords.latitude, lon: pos.coords.longitude, acc: pos.coords.accuracy};
+                    document.getElementById('locStatus').textContent = '✅ OK';
+                    document.getElementById('lat').textContent = location.lat.toFixed(6);
+                    document.getElementById('lon').textContent = location.lon.toFixed(6);
+                    document.getElementById('acc').textContent = Math.round(location.acc) + 'm';
+                    checkReady();
+                },
+                err => { document.getElementById('locStatus').textContent = '❌ Error'; },
+                {enableHighAccuracy: true, timeout: 10000}
+            );
+        }
+        
+        function checkReady() {
+            const ready = stream && location;
+            document.getElementById('btnEntrada').disabled = !ready;
+            document.getElementById('btnSalida').disabled = !ready;
+            if (ready) document.getElementById('faceGuide').classList.add('ready');
+        }
+        
+        // Capturar foto
+        function capture() {
+            ctx.drawImage(video, 0, 0);
+            return canvas.toDataURL('image/jpeg', 0.85);
+        }
+        
+        // Check-in
+        async function doCheckin(tipo) {
+            if (!stream || !location) return;
+            document.getElementById('spinner').classList.add('show');
+            
+            try {
+                const img = capture();
+                const res = await fetch(API_URL + '/checkin', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        imagen_base64: img,
+                        latitud: location.lat,
+                        longitud: location.lon,
+                        precision_gps: location.acc,
+                        tipo_registro: tipo,
+                        dispositivo_id: 'movil_' + Date.now()
+                    })
+                });
+                const data = await res.json();
+                showResult(data, tipo);
+            } catch(e) {
+                showResult({success: false, message: 'Error de conexión: ' + e}, tipo);
+            }
+            
+            document.getElementById('spinner').classList.remove('show');
+        }
+        
+        function showResult(data, tipo) {
+            document.getElementById('modalIcon').textContent = data.success ? '✅' : '❌';
+            document.getElementById('modalTitle').textContent = data.success ? (tipo === 'entrada' ? '¡Entrada Registrada!' : '¡Salida Registrada!') : 'Error';
+            document.getElementById('modalMsg').textContent = data.success ? (data.empleado_nombre || 'Usuario') : data.message;
+            document.getElementById('modalDetails').textContent = data.success ? 'Confianza: ' + (data.confianza_facial || '--') + '%' : '';
+            document.getElementById('modal').classList.add('show');
+        }
+        
+        function closeModal() { document.getElementById('modal').classList.remove('show'); }
+        
+        // Eventos
+        document.getElementById('btnEntrada').onclick = () => doCheckin('entrada');
+        document.getElementById('btnSalida').onclick = () => doCheckin('salida');
+        
+        // Iniciar
+        initCamera();
+        initGPS();
+    </script>
+</body>
+</html>

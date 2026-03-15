@@ -177,6 +177,11 @@ export function getAsistenciaHoy() {
   return apiFetch<RegistroAsistencia[]>("/api/asistencia/hoy");
 }
 
+// Cambiar contraseña
+export function changePassword(data: { current_password: string; new_password: string }, token: string) {
+  return apiFetch<{ message: string }>("/api/auth/change-password", { method: "POST", body: data, token });
+}
+
 // Health
 export function getHealth() {
   return apiFetch<{ status: string; database: string }>("/health");

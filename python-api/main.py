@@ -25,7 +25,7 @@ from schemas import (
     RegistroAsistenciaResponse
 )
 from services import face_service, geo_service, Coordinates
-from services import verify_password, create_access_token, get_current_user
+from services import verify_password, hash_password, create_access_token, get_current_user
 
 # ========================================
 # LIFESPAN
@@ -117,6 +117,25 @@ async def login(data: LoginRequest, db: Session = Depends(get_db)):
         username=user.username,
         rol=user.rol
     )
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@app.post("/api/auth/change-password", tags=["Auth"])
+async def change_password(data: ChangePasswordRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    user = db.query(UsuarioSistema).filter(UsuarioSistema.id == current_user["sub"]).first()
+    if not user:
+        raise HTTPException(404, "Usuario no encontrado")
+
+    if not verify_password(data.current_password, user.password_hash):
+        raise HTTPException(400, "Contrasena actual incorrecta")
+
+    user.password_hash = hash_password(data.new_password)
+    db.commit()
+    return {"message": "Contrasena actualizada correctamente"}
 
 
 @app.get("/api/auth/me", tags=["Auth"])
