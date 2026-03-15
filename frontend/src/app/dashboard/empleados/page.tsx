@@ -1,25 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getEmpleados, getEmpresas, createEmpleado, Empleado, Empresa } from "@/lib/api";
+import { getEmpleados, getEmpresas, createEmpleado, updateEmpleado, Empleado, Empresa } from "@/lib/api";
 import { getAuth } from "@/lib/auth";
+
+const emptyForm = { numero_empleado: "", nombre: "", apellido_paterno: "", apellido_materno: "", email: "", puesto: "" };
 
 export default function EmpleadosPage() {
   const [empleados, setEmpleados] = useState<Empleado[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [editingEmpleado, setEditingEmpleado] = useState<Empleado | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const [form, setForm] = useState({
-    numero_empleado: "",
-    nombre: "",
-    apellido_paterno: "",
-    apellido_materno: "",
-    email: "",
-    puesto: "",
-  });
+  const [form, setForm] = useState(emptyForm);
 
   useEffect(() => {
     loadData();
@@ -37,36 +33,73 @@ export default function EmpleadosPage() {
     }
   }
 
-  async function handleCreate(e: React.FormEvent) {
+  function openCreate() {
+    setEditingEmpleado(null);
+    setForm(emptyForm);
+    setError("");
+    setShowModal(true);
+  }
+
+  function openEdit(emp: Empleado) {
+    setEditingEmpleado(emp);
+    setForm({
+      numero_empleado: emp.numero_empleado,
+      nombre: emp.nombre,
+      apellido_paterno: emp.apellido_paterno,
+      apellido_materno: emp.apellido_materno || "",
+      email: emp.email || "",
+      puesto: emp.puesto || "",
+    });
+    setError("");
+    setShowModal(true);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     const auth = getAuth();
     if (!auth) return;
-    if (empresas.length === 0) {
-      setError("Primero crea una empresa");
-      return;
-    }
 
     try {
-      await createEmpleado(
-        {
-          empresa_id: empresas[0].id,
-          numero_empleado: form.numero_empleado,
-          nombre: form.nombre,
-          apellido_paterno: form.apellido_paterno,
-          apellido_materno: form.apellido_materno || undefined,
-          email: form.email || undefined,
-          puesto: form.puesto || undefined,
-        },
-        auth.token
-      );
-      setSuccess("Empleado creado correctamente");
+      if (editingEmpleado) {
+        await updateEmpleado(
+          editingEmpleado.id,
+          {
+            nombre: form.nombre,
+            apellido_paterno: form.apellido_paterno,
+            apellido_materno: form.apellido_materno || undefined,
+            email: form.email || undefined,
+            puesto: form.puesto || undefined,
+          },
+          auth.token
+        );
+        setSuccess("Empleado actualizado correctamente");
+      } else {
+        if (empresas.length === 0) {
+          setError("Primero crea una empresa");
+          return;
+        }
+        await createEmpleado(
+          {
+            empresa_id: empresas[0].id,
+            numero_empleado: form.numero_empleado,
+            nombre: form.nombre,
+            apellido_paterno: form.apellido_paterno,
+            apellido_materno: form.apellido_materno || undefined,
+            email: form.email || undefined,
+            puesto: form.puesto || undefined,
+          },
+          auth.token
+        );
+        setSuccess("Empleado creado correctamente");
+      }
       setShowModal(false);
-      setForm({ numero_empleado: "", nombre: "", apellido_paterno: "", apellido_materno: "", email: "", puesto: "" });
+      setForm(emptyForm);
+      setEditingEmpleado(null);
       loadData();
       setTimeout(() => setSuccess(""), 3000);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error al crear empleado");
+      setError(err instanceof Error ? err.message : "Error al guardar empleado");
     }
   }
 
@@ -83,7 +116,7 @@ export default function EmpleadosPage() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Empleados</h1>
         <button
-          onClick={() => setShowModal(true)}
+          onClick={openCreate}
           className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition"
         >
           + Nuevo Empleado
@@ -104,6 +137,7 @@ export default function EmpleadosPage() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Puesto</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Biometrico</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -126,11 +160,19 @@ export default function EmpleadosPage() {
                       </a>
                     )}
                   </td>
+                  <td className="px-6 py-4">
+                    <button
+                      onClick={() => openEdit(emp)}
+                      className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                    >
+                      Editar
+                    </button>
+                  </td>
                 </tr>
               ))}
               {empleados.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
                     No hay empleados registrados
                   </td>
                 </tr>
@@ -140,12 +182,14 @@ export default function EmpleadosPage() {
         </div>
       </div>
 
-      {/* Modal nuevo empleado */}
+      {/* Modal crear/editar empleado */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Nuevo Empleado</h2>
+              <h2 className="text-lg font-semibold text-gray-900">
+                {editingEmpleado ? "Editar Empleado" : "Nuevo Empleado"}
+              </h2>
               <button onClick={() => { setShowModal(false); setError(""); }} className="text-gray-400 hover:text-gray-600">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -157,10 +201,17 @@ export default function EmpleadosPage() {
               <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">{error}</div>
             )}
 
-            <form onSubmit={handleCreate} className="space-y-3">
+            <form onSubmit={handleSubmit} className="space-y-3">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">No. Empleado *</label>
-                <input type="text" required value={form.numero_empleado} onChange={(e) => setForm({ ...form, numero_empleado: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-gray-900" />
+                <input
+                  type="text"
+                  required
+                  disabled={!!editingEmpleado}
+                  value={form.numero_empleado}
+                  onChange={(e) => setForm({ ...form, numero_empleado: e.target.value })}
+                  className={`w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-gray-900 ${editingEmpleado ? "bg-gray-100 cursor-not-allowed" : ""}`}
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
@@ -183,7 +234,7 @@ export default function EmpleadosPage() {
                 <input type="text" value={form.puesto} onChange={(e) => setForm({ ...form, puesto: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-gray-900" />
               </div>
               <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg text-sm font-medium transition mt-2">
-                Guardar
+                {editingEmpleado ? "Guardar Cambios" : "Crear Empleado"}
               </button>
             </form>
           </div>

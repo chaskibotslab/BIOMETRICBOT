@@ -27,6 +27,17 @@ class EmpleadoCreate(BaseModel):
     departamento: Optional[str] = None
 
 
+class EmpleadoUpdate(BaseModel):
+    nombre: Optional[str] = None
+    apellido_paterno: Optional[str] = None
+    apellido_materno: Optional[str] = None
+    email: Optional[str] = None
+    telefono: Optional[str] = None
+    puesto: Optional[str] = None
+    departamento: Optional[str] = None
+    activo: Optional[bool] = None
+
+
 class EmpleadoResponse(BaseModel):
     id: UUID
     numero_empleado: str

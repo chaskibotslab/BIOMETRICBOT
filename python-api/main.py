@@ -16,7 +16,7 @@ from config import settings
 from database import get_db, init_db
 from models import Empresa, Sucursal, Empleado, DatoBiometrico, RegistroAsistencia, UsuarioSistema
 from schemas import (
-    EmpleadoCreate, EmpleadoResponse,
+    EmpleadoCreate, EmpleadoUpdate, EmpleadoResponse,
     EmpresaCreate, EmpresaResponse,
     SucursalCreate, SucursalResponse,
     RegistroBiometricoRequest, RegistroBiometricoResponse,
@@ -217,6 +217,36 @@ async def listar_empleados(empresa_id: UUID = None, db: Session = Depends(get_db
         )
         for emp, tiene_bio in rows
     ]
+
+
+@app.put("/api/empleados/{empleado_id}", response_model=EmpleadoResponse, tags=["Empleados"])
+async def editar_empleado(empleado_id: UUID, data: EmpleadoUpdate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    empleado = db.query(Empleado).filter(Empleado.id == empleado_id).first()
+    if not empleado:
+        raise HTTPException(404, "Empleado no encontrado")
+
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(empleado, field, value)
+
+    db.commit()
+    db.refresh(empleado)
+
+    tiene_bio = db.query(exists().where(
+        and_(DatoBiometrico.empleado_id == empleado.id, DatoBiometrico.activo == True)
+    )).scalar()
+
+    return EmpleadoResponse(
+        id=empleado.id,
+        numero_empleado=empleado.numero_empleado,
+        nombre=empleado.nombre,
+        apellido_paterno=empleado.apellido_paterno,
+        apellido_materno=empleado.apellido_materno,
+        email=empleado.email,
+        puesto=empleado.puesto,
+        activo=empleado.activo,
+        tiene_biometrico=tiene_bio
+    )
 
 
 # ========================================
@@ -423,7 +453,23 @@ async def realizar_checkin(data: CheckInRequest, request: Request, db: Session =
         distancia = geo_result.distance_meters
         print(f"📍 {geo_result.message}")
 
-    # 4. Crear registro
+    # 4. Verificar duplicado (mismo empleado, mismo tipo, mismo dia)
+    registro_existente = db.query(RegistroAsistencia).filter(
+        RegistroAsistencia.empleado_id == empleado_id,
+        RegistroAsistencia.tipo == data.tipo_registro.value,
+        RegistroAsistencia.fecha == datetime.now().date()
+    ).first()
+
+    if registro_existente:
+        return CheckInResponse(
+            success=False,
+            message=f"Ya registraste {data.tipo_registro.value} hoy",
+            empleado_id=empleado_id,
+            empleado_nombre=empleado.nombre_completo,
+            confianza_facial=face_result.confidence
+        )
+
+    # 5. Crear registro
     registro = RegistroAsistencia(
         empleado_id=empleado_id,
         sucursal_id=sucursal.id if sucursal else None,

@@ -111,6 +111,18 @@ export function createEmpleado(data: {
   return apiFetch<Empleado>("/api/empleados", { method: "POST", body: data, token });
 }
 
+export function updateEmpleado(id: string, data: {
+  nombre?: string;
+  apellido_paterno?: string;
+  apellido_materno?: string;
+  email?: string;
+  puesto?: string;
+  departamento?: string;
+  activo?: boolean;
+}, token: string) {
+  return apiFetch<Empleado>(`/api/empleados/${id}`, { method: "PUT", body: data, token });
+}
+
 // Biometrico
 export interface RegistroBiometricoResponse {
   success: boolean;
