@@ -7,8 +7,8 @@ from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, text, exists
-from datetime import datetime
-from typing import List
+from datetime import datetime, date, timedelta
+from typing import List, Optional
 from uuid import UUID
 from pydantic import BaseModel
 
@@ -617,6 +617,139 @@ async def asistencia_hoy(db: Session = Depends(get_db)):
         )
         for r, emp in rows
     ]
+
+
+@app.get("/api/asistencia", response_model=List[RegistroAsistenciaResponse], tags=["Reportes"])
+async def buscar_asistencia(
+    fecha_desde: Optional[date] = None,
+    fecha_hasta: Optional[date] = None,
+    empleado_id: Optional[UUID] = None,
+    tipo: Optional[str] = None,
+    buscar: Optional[str] = None,
+    limit: int = 500,
+    db: Session = Depends(get_db)
+):
+    """Busca registros de asistencia con filtros avanzados"""
+    query = db.query(RegistroAsistencia, Empleado).join(
+        Empleado, RegistroAsistencia.empleado_id == Empleado.id
+    )
+
+    if fecha_desde:
+        query = query.filter(RegistroAsistencia.fecha >= fecha_desde)
+    else:
+        query = query.filter(RegistroAsistencia.fecha >= datetime.now().date() - timedelta(days=30))
+
+    if fecha_hasta:
+        query = query.filter(RegistroAsistencia.fecha <= fecha_hasta)
+
+    if empleado_id:
+        query = query.filter(RegistroAsistencia.empleado_id == empleado_id)
+
+    if tipo and tipo in ("entrada", "salida"):
+        query = query.filter(RegistroAsistencia.tipo == tipo)
+
+    if buscar:
+        search_term = f"%{buscar}%"
+        query = query.filter(
+            (Empleado.nombre.ilike(search_term)) |
+            (Empleado.apellido_paterno.ilike(search_term)) |
+            (Empleado.apellido_materno.ilike(search_term)) |
+            (Empleado.numero_empleado.ilike(search_term))
+        )
+
+    rows = query.order_by(
+        RegistroAsistencia.fecha.desc(),
+        RegistroAsistencia.hora.desc()
+    ).limit(limit).all()
+
+    return [
+        RegistroAsistenciaResponse(
+            id=r.id,
+            empleado_id=r.empleado_id,
+            empleado_nombre=emp.nombre_completo,
+            tipo=r.tipo,
+            fecha=r.fecha,
+            hora=r.hora,
+            confianza_match=float(r.confianza_match) if r.confianza_match else None,
+            dentro_rango=r.dentro_rango,
+            distancia_sucursal=float(r.distancia_sucursal) if r.distancia_sucursal else None
+        )
+        for r, emp in rows
+    ]
+
+
+@app.get("/api/asistencia/resumen", tags=["Reportes"])
+async def resumen_asistencia(
+    fecha_desde: Optional[date] = None,
+    fecha_hasta: Optional[date] = None,
+    db: Session = Depends(get_db)
+):
+    """Resumen estadistico de asistencia por rango de fechas"""
+    from sqlalchemy import func as sqlfunc
+
+    if not fecha_desde:
+        fecha_desde = datetime.now().date() - timedelta(days=30)
+    if not fecha_hasta:
+        fecha_hasta = datetime.now().date()
+
+    # Total registros
+    total = db.query(sqlfunc.count(RegistroAsistencia.id)).filter(
+        RegistroAsistencia.fecha >= fecha_desde,
+        RegistroAsistencia.fecha <= fecha_hasta
+    ).scalar() or 0
+
+    # Entradas y salidas
+    entradas = db.query(sqlfunc.count(RegistroAsistencia.id)).filter(
+        RegistroAsistencia.fecha >= fecha_desde,
+        RegistroAsistencia.fecha <= fecha_hasta,
+        RegistroAsistencia.tipo == "entrada"
+    ).scalar() or 0
+
+    salidas = db.query(sqlfunc.count(RegistroAsistencia.id)).filter(
+        RegistroAsistencia.fecha >= fecha_desde,
+        RegistroAsistencia.fecha <= fecha_hasta,
+        RegistroAsistencia.tipo == "salida"
+    ).scalar() or 0
+
+    # Empleados unicos
+    empleados_unicos = db.query(
+        sqlfunc.count(sqlfunc.distinct(RegistroAsistencia.empleado_id))
+    ).filter(
+        RegistroAsistencia.fecha >= fecha_desde,
+        RegistroAsistencia.fecha <= fecha_hasta
+    ).scalar() or 0
+
+    # Dias con registros
+    dias_con_registro = db.query(
+        sqlfunc.count(sqlfunc.distinct(RegistroAsistencia.fecha))
+    ).filter(
+        RegistroAsistencia.fecha >= fecha_desde,
+        RegistroAsistencia.fecha <= fecha_hasta
+    ).scalar() or 0
+
+    # Registros por dia (para grafica)
+    registros_por_dia = db.query(
+        RegistroAsistencia.fecha,
+        sqlfunc.count(RegistroAsistencia.id).label("total"),
+        sqlfunc.count(sqlfunc.distinct(RegistroAsistencia.empleado_id)).label("empleados")
+    ).filter(
+        RegistroAsistencia.fecha >= fecha_desde,
+        RegistroAsistencia.fecha <= fecha_hasta
+    ).group_by(RegistroAsistencia.fecha).order_by(RegistroAsistencia.fecha).all()
+
+    return {
+        "fecha_desde": fecha_desde.isoformat(),
+        "fecha_hasta": fecha_hasta.isoformat(),
+        "total_registros": total,
+        "entradas": entradas,
+        "salidas": salidas,
+        "empleados_unicos": empleados_unicos,
+        "dias_con_registro": dias_con_registro,
+        "por_dia": [
+            {"fecha": row.fecha.isoformat(), "total": row.total, "empleados": row.empleados}
+            for row in registros_por_dia
+        ]
+    }
 
 
 # ========================================

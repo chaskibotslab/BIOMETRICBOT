@@ -181,6 +181,44 @@ export function getAsistenciaHoy() {
   return apiFetch<RegistroAsistencia[]>("/api/asistencia/hoy");
 }
 
+export interface AsistenciaFilters {
+  fecha_desde?: string;
+  fecha_hasta?: string;
+  empleado_id?: string;
+  tipo?: string;
+  buscar?: string;
+}
+
+export function buscarAsistencia(filters: AsistenciaFilters = {}) {
+  const params = new URLSearchParams();
+  if (filters.fecha_desde) params.set("fecha_desde", filters.fecha_desde);
+  if (filters.fecha_hasta) params.set("fecha_hasta", filters.fecha_hasta);
+  if (filters.empleado_id) params.set("empleado_id", filters.empleado_id);
+  if (filters.tipo) params.set("tipo", filters.tipo);
+  if (filters.buscar) params.set("buscar", filters.buscar);
+  const qs = params.toString();
+  return apiFetch<RegistroAsistencia[]>(`/api/asistencia${qs ? `?${qs}` : ""}`);
+}
+
+export interface ResumenAsistencia {
+  fecha_desde: string;
+  fecha_hasta: string;
+  total_registros: number;
+  entradas: number;
+  salidas: number;
+  empleados_unicos: number;
+  dias_con_registro: number;
+  por_dia: { fecha: string; total: number; empleados: number }[];
+}
+
+export function getResumenAsistencia(fecha_desde?: string, fecha_hasta?: string) {
+  const params = new URLSearchParams();
+  if (fecha_desde) params.set("fecha_desde", fecha_desde);
+  if (fecha_hasta) params.set("fecha_hasta", fecha_hasta);
+  const qs = params.toString();
+  return apiFetch<ResumenAsistencia>(`/api/asistencia/resumen${qs ? `?${qs}` : ""}`);
+}
+
 // Cambiar contraseña
 export function changePassword(data: { current_password: string; new_password: string }, token: string) {
   return apiFetch<{ message: string }>("/api/auth/change-password", { method: "POST", body: data, token });
