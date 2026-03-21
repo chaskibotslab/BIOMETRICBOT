@@ -268,6 +268,40 @@ class FaceRecognitionService:
             message=f"Sin coincidencia ({confidence:.1f}% < {self.similarity_threshold * 100}%)"
         )
 
+    def find_match_from_encoding(self, encoding: np.ndarray, known_encodings: List[Tuple[str, np.ndarray]]) -> MatchResult:
+        """Compara un encoding ya extraido contra la lista de conocidos (sin decodificar imagen)"""
+        if not known_encodings:
+            return MatchResult(matched=False, message="No hay registros para comparar")
+
+        print(f"\n[DUP-CHECK] Verificando duplicado contra {len(known_encodings)} empleados...")
+
+        best_id = None
+        best_sim = -1
+
+        for emp_id, known_enc in known_encodings:
+            if known_enc.shape[0] != encoding.shape[0]:
+                continue
+            sim = self.cosine_similarity(known_enc, encoding)
+            print(f"  - {emp_id[:8]}...: {sim:.4f} ({sim * 100:.1f}%)")
+
+            if sim > best_sim:
+                best_sim = sim
+                best_id = emp_id
+
+        confidence = float(best_sim * 100) if best_sim > 0 else 0.0
+
+        if best_sim >= self.similarity_threshold:
+            print(f"[DUP-CHECK] *** ROSTRO DUPLICADO: {best_id[:8]}... ({confidence:.1f}%) ***")
+            return MatchResult(
+                matched=True,
+                confidence=float(round(confidence, 1)),
+                empleado_id=best_id,
+                message="Rostro duplicado detectado"
+            )
+
+        print(f"[DUP-CHECK] Sin duplicado (mejor: {confidence:.1f}%)")
+        return MatchResult(matched=False, confidence=float(round(confidence, 1)), message="Sin duplicado")
+
     @staticmethod
     def serialize_encoding(encoding: np.ndarray) -> bytes:
         return encoding.astype(np.float32).tobytes()

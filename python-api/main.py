@@ -138,6 +138,29 @@ async def change_password(data: ChangePasswordRequest, db: Session = Depends(get
     return {"message": "Contrasena actualizada correctamente"}
 
 
+class ResetPasswordRequest(BaseModel):
+    username: str
+    new_password: str
+
+
+@app.post("/api/auth/reset-password", tags=["Auth"])
+async def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Solo admin puede resetear contraseñas de otros usuarios"""
+    if current_user.get("rol") != "admin":
+        raise HTTPException(403, "Solo administradores pueden resetear contrasenas")
+
+    user = db.query(UsuarioSistema).filter(UsuarioSistema.username == data.username).first()
+    if not user:
+        raise HTTPException(404, "Usuario no encontrado")
+
+    if len(data.new_password) < 6:
+        raise HTTPException(400, "La contrasena debe tener al menos 6 caracteres")
+
+    user.password_hash = hash_password(data.new_password)
+    db.commit()
+    return {"message": f"Contrasena de '{data.username}' reseteada correctamente"}
+
+
 @app.get("/api/auth/me", tags=["Auth"])
 async def get_me(current_user: dict = Depends(get_current_user)):
     return current_user
@@ -309,6 +332,33 @@ async def registrar_biometrico(data: RegistroBiometricoRequest, db: Session = De
             message=result.message,
             empleado_id=data.empleado_id
         )
+
+    # ── Verificar que el rostro NO pertenezca a otro empleado ──
+    otros_bios = db.query(DatoBiometrico).filter(
+        DatoBiometrico.empleado_id != data.empleado_id,
+        DatoBiometrico.activo == True,
+        DatoBiometrico.tipo == "facial"
+    ).all()
+
+    if otros_bios:
+        known_list = []
+        for bio in otros_bios:
+            enc = face_service.deserialize_encoding(bio.encoding)
+            known_list.append((str(bio.empleado_id), enc))
+
+        dup_check = face_service.find_match_from_encoding(result.encoding, known_list)
+
+        if dup_check.matched:
+            otro_emp = db.query(Empleado).filter(
+                Empleado.id == UUID(dup_check.empleado_id)
+            ).first()
+            nombre_otro = otro_emp.nombre_completo if otro_emp else "otro empleado"
+            print(f"⚠️ Rostro duplicado detectado: coincide con {nombre_otro} ({dup_check.confidence:.1f}%)")
+            return RegistroBiometricoResponse(
+                success=False,
+                message=f"Este rostro ya esta registrado para: {nombre_otro} (similitud: {dup_check.confidence:.1f}%). No se puede registrar el mismo rostro para dos empleados.",
+                empleado_id=data.empleado_id
+            )
 
     # Serializar encoding
     encoding_bytes = face_service.serialize_encoding(result.encoding)

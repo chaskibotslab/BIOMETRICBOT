@@ -186,6 +186,11 @@ export function changePassword(data: { current_password: string; new_password: s
   return apiFetch<{ message: string }>("/api/auth/change-password", { method: "POST", body: data, token });
 }
 
+// Reset contraseña (admin)
+export function resetPassword(data: { username: string; new_password: string }, token: string) {
+  return apiFetch<{ message: string }>("/api/auth/reset-password", { method: "POST", body: data, token });
+}
+
 // Health
 export function getHealth() {
   return apiFetch<{ status: string; database: string }>("/health");
