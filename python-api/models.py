@@ -39,6 +39,9 @@ class Sucursal(Base):
     latitud = Column(Numeric(10, 8))
     longitud = Column(Numeric(11, 8))
     radio_permitido_metros = Column(Integer, default=100)
+    hora_entrada = Column(Time, nullable=True)
+    hora_salida = Column(Time, nullable=True)
+    tolerancia_minutos = Column(Integer, default=15)
     activo = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     

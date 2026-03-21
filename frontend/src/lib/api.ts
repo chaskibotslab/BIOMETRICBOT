@@ -66,18 +66,44 @@ export function createEmpresa(data: { nombre: string; rfc?: string; email?: stri
 // Sucursales
 export interface Sucursal {
   id: string;
+  empresa_id: string | null;
   nombre: string;
-  latitud: number;
-  longitud: number;
+  direccion: string | null;
+  latitud: number | null;
+  longitud: number | null;
   radio_permitido_metros: number;
+  hora_entrada: string | null;
+  hora_salida: string | null;
+  tolerancia_minutos: number;
+  activo: boolean;
 }
 
 export function getSucursales() {
   return apiFetch<Sucursal[]>("/api/sucursales");
 }
 
-export function createSucursal(data: { empresa_id: string; nombre: string; direccion?: string; latitud: number; longitud: number; radio_permitido_metros?: number }, token: string) {
+export function getSucursal(id: string) {
+  return apiFetch<Sucursal>(`/api/sucursales/${id}`);
+}
+
+export function createSucursal(data: {
+  empresa_id: string; nombre: string; direccion?: string;
+  latitud: number; longitud: number; radio_permitido_metros?: number;
+  hora_entrada?: string; hora_salida?: string; tolerancia_minutos?: number;
+}, token: string) {
   return apiFetch<Sucursal>("/api/sucursales", { method: "POST", body: data, token });
+}
+
+export function updateSucursal(id: string, data: {
+  nombre?: string; direccion?: string; latitud?: number; longitud?: number;
+  radio_permitido_metros?: number; hora_entrada?: string; hora_salida?: string;
+  tolerancia_minutos?: number; activo?: boolean;
+}, token: string) {
+  return apiFetch<Sucursal>(`/api/sucursales/${id}`, { method: "PUT", body: data, token });
+}
+
+export function deleteSucursal(id: string, token: string) {
+  return apiFetch<{ message: string }>(`/api/sucursales/${id}`, { method: "DELETE", token });
 }
 
 // Empleados
@@ -227,6 +253,58 @@ export function changePassword(data: { current_password: string; new_password: s
 // Reset contraseña (admin)
 export function resetPassword(data: { username: string; new_password: string }, token: string) {
   return apiFetch<{ message: string }>("/api/auth/reset-password", { method: "POST", body: data, token });
+}
+
+// Reporte individual empleado
+export interface ReporteEmpleado {
+  empleado: { id: string; nombre: string; numero_empleado: string; puesto: string | null; departamento: string | null };
+  sucursal: { nombre: string | null; hora_entrada: string | null; hora_salida: string | null; tolerancia_minutos: number };
+  periodo: { fecha_desde: string; fecha_hasta: string; dias_laborales: number };
+  estadisticas: {
+    dias_asistidos: number; dias_faltados: number; total_entradas: number;
+    total_salidas: number; retardos: number; horas_trabajadas: number; promedio_horas_dia: number;
+  };
+  registros: {
+    id: string; fecha: string; hora: string | null; tipo: string;
+    confianza_match: number | null; dentro_rango: boolean | null;
+    distancia_sucursal: number | null; retardo: boolean;
+  }[];
+}
+
+export function getReporteEmpleado(id: string, fecha_desde?: string, fecha_hasta?: string) {
+  const params = new URLSearchParams();
+  if (fecha_desde) params.set("fecha_desde", fecha_desde);
+  if (fecha_hasta) params.set("fecha_hasta", fecha_hasta);
+  const qs = params.toString();
+  return apiFetch<ReporteEmpleado>(`/api/asistencia/empleado/${id}${qs ? `?${qs}` : ""}`);
+}
+
+// Faltas
+export interface FaltasResponse {
+  fecha: string;
+  total_activos: number;
+  con_entrada: number;
+  sin_entrada: number;
+  faltantes: { id: string; nombre: string; numero_empleado: string; puesto: string | null; tiene_biometrico: boolean }[];
+}
+
+export function getFaltas(fecha?: string) {
+  const qs = fecha ? `?fecha=${fecha}` : "";
+  return apiFetch<FaltasResponse>(`/api/asistencia/faltas${qs}`);
+}
+
+// Dashboard stats
+export interface DashboardStats {
+  total_empleados: number;
+  con_biometrico: number;
+  hoy: { entradas: number; salidas: number; retardos: number; faltas: number };
+  semana: { registros: number };
+  mes: { registros: number };
+  tendencia_semanal: { fecha: string; dia: string; total: number; empleados: number }[];
+}
+
+export function getDashboardStats() {
+  return apiFetch<DashboardStats>("/api/dashboard/stats");
 }
 
 // Health

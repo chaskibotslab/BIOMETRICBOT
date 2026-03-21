@@ -24,7 +24,26 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db():
     """Crea las tablas si no existen"""
     Base.metadata.create_all(bind=engine)
+    migrate_db()
     print("✅ Base de datos inicializada")
+
+
+def migrate_db():
+    """Agrega columnas nuevas a tablas existentes (safe migration)"""
+    from sqlalchemy import text
+    migrations = [
+        "ALTER TABLE sucursales ADD COLUMN IF NOT EXISTS hora_entrada TIME",
+        "ALTER TABLE sucursales ADD COLUMN IF NOT EXISTS hora_salida TIME",
+        "ALTER TABLE sucursales ADD COLUMN IF NOT EXISTS tolerancia_minutos INTEGER DEFAULT 15",
+    ]
+    with engine.connect() as conn:
+        for sql in migrations:
+            try:
+                conn.execute(text(sql))
+            except Exception as e:
+                print(f"[MIGRATION] Skip: {e}")
+        conn.commit()
+    print("✅ Migraciones aplicadas")
 
 
 def get_db():

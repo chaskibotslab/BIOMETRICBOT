@@ -18,7 +18,7 @@ from models import Empresa, Sucursal, Empleado, DatoBiometrico, RegistroAsistenc
 from schemas import (
     EmpleadoCreate, EmpleadoUpdate, EmpleadoResponse,
     EmpresaCreate, EmpresaResponse,
-    SucursalCreate, SucursalResponse,
+    SucursalCreate, SucursalUpdate, SucursalResponse,
     RegistroBiometricoRequest, RegistroBiometricoResponse,
     CheckInRequest, CheckInResponse,
     VerificacionRequest, VerificacionResponse,
@@ -35,6 +35,7 @@ async def lifespan(app: FastAPI):
     print("=" * 50)
     print("SISTEMA BIOMETRICO CHASKIBOTS - INICIANDO")
     print(f"Umbral similitud: {settings.SIMILARITY_THRESHOLD}")
+    init_db()
     print("=" * 50)
     yield
     print("Sistema detenido.")
@@ -186,18 +187,92 @@ async def listar_empresas(db: Session = Depends(get_db)):
 # ========================================
 # SUCURSALES
 # ========================================
+def _parse_time(t: Optional[str]):
+    """Convierte string HH:MM a objeto time"""
+    if not t:
+        return None
+    from datetime import time as dt_time
+    parts = t.split(":")
+    return dt_time(int(parts[0]), int(parts[1]))
+
+
+def _format_time(t) -> Optional[str]:
+    """Convierte time a string HH:MM"""
+    if not t:
+        return None
+    return t.strftime("%H:%M")
+
+
 @app.post("/api/sucursales", response_model=SucursalResponse, tags=["Sucursales"])
 async def crear_sucursal(data: SucursalCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    sucursal = Sucursal(**data.model_dump())
+    d = data.model_dump()
+    d["hora_entrada"] = _parse_time(d.get("hora_entrada"))
+    d["hora_salida"] = _parse_time(d.get("hora_salida"))
+    sucursal = Sucursal(**d)
     db.add(sucursal)
     db.commit()
     db.refresh(sucursal)
-    return sucursal
+    return _sucursal_to_response(sucursal)
 
 
 @app.get("/api/sucursales", response_model=List[SucursalResponse], tags=["Sucursales"])
 async def listar_sucursales(db: Session = Depends(get_db)):
-    return db.query(Sucursal).filter(Sucursal.activo == True).all()
+    sucursales = db.query(Sucursal).filter(Sucursal.activo == True).all()
+    return [_sucursal_to_response(s) for s in sucursales]
+
+
+@app.get("/api/sucursales/{sucursal_id}", response_model=SucursalResponse, tags=["Sucursales"])
+async def obtener_sucursal(sucursal_id: UUID, db: Session = Depends(get_db)):
+    sucursal = db.query(Sucursal).filter(Sucursal.id == sucursal_id).first()
+    if not sucursal:
+        raise HTTPException(404, "Sucursal no encontrada")
+    return _sucursal_to_response(sucursal)
+
+
+@app.put("/api/sucursales/{sucursal_id}", response_model=SucursalResponse, tags=["Sucursales"])
+async def editar_sucursal(sucursal_id: UUID, data: SucursalUpdate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    sucursal = db.query(Sucursal).filter(Sucursal.id == sucursal_id).first()
+    if not sucursal:
+        raise HTTPException(404, "Sucursal no encontrada")
+
+    update_data = data.model_dump(exclude_unset=True)
+    if "hora_entrada" in update_data:
+        update_data["hora_entrada"] = _parse_time(update_data["hora_entrada"])
+    if "hora_salida" in update_data:
+        update_data["hora_salida"] = _parse_time(update_data["hora_salida"])
+
+    for field, value in update_data.items():
+        setattr(sucursal, field, value)
+
+    db.commit()
+    db.refresh(sucursal)
+    return _sucursal_to_response(sucursal)
+
+
+@app.delete("/api/sucursales/{sucursal_id}", tags=["Sucursales"])
+async def eliminar_sucursal(sucursal_id: UUID, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    sucursal = db.query(Sucursal).filter(Sucursal.id == sucursal_id).first()
+    if not sucursal:
+        raise HTTPException(404, "Sucursal no encontrada")
+    sucursal.activo = False
+    db.commit()
+    return {"message": f"Sucursal '{sucursal.nombre}' desactivada"}
+
+
+def _sucursal_to_response(s: Sucursal) -> SucursalResponse:
+    return SucursalResponse(
+        id=s.id,
+        empresa_id=s.empresa_id,
+        nombre=s.nombre,
+        direccion=s.direccion,
+        latitud=float(s.latitud) if s.latitud else None,
+        longitud=float(s.longitud) if s.longitud else None,
+        radio_permitido_metros=s.radio_permitido_metros or 100,
+        hora_entrada=_format_time(s.hora_entrada),
+        hora_salida=_format_time(s.hora_salida),
+        tolerancia_minutos=s.tolerancia_minutos or 15,
+        activo=s.activo,
+    )
 
 
 # ========================================
@@ -749,6 +824,282 @@ async def resumen_asistencia(
             {"fecha": row.fecha.isoformat(), "total": row.total, "empleados": row.empleados}
             for row in registros_por_dia
         ]
+    }
+
+
+# ========================================
+# REPORTE INDIVIDUAL POR EMPLEADO
+# ========================================
+@app.get("/api/asistencia/empleado/{empleado_id}", tags=["Reportes"])
+async def reporte_empleado(
+    empleado_id: UUID,
+    fecha_desde: Optional[date] = None,
+    fecha_hasta: Optional[date] = None,
+    db: Session = Depends(get_db)
+):
+    """Reporte detallado de asistencia de un empleado"""
+    from sqlalchemy import func as sqlfunc
+
+    empleado = db.query(Empleado).filter(Empleado.id == empleado_id).first()
+    if not empleado:
+        raise HTTPException(404, "Empleado no encontrado")
+
+    if not fecha_desde:
+        fecha_desde = datetime.now().date() - timedelta(days=30)
+    if not fecha_hasta:
+        fecha_hasta = datetime.now().date()
+
+    # Obtener sucursal y horario
+    sucursal = None
+    hora_entrada_esperada = None
+    hora_salida_esperada = None
+    tolerancia = 15
+    if empleado.sucursal_id:
+        sucursal = db.query(Sucursal).filter(Sucursal.id == empleado.sucursal_id).first()
+        if sucursal:
+            hora_entrada_esperada = _format_time(sucursal.hora_entrada)
+            hora_salida_esperada = _format_time(sucursal.hora_salida)
+            tolerancia = sucursal.tolerancia_minutos or 15
+
+    # Registros en rango
+    registros = db.query(RegistroAsistencia).filter(
+        RegistroAsistencia.empleado_id == empleado_id,
+        RegistroAsistencia.fecha >= fecha_desde,
+        RegistroAsistencia.fecha <= fecha_hasta
+    ).order_by(RegistroAsistencia.fecha.desc(), RegistroAsistencia.hora.desc()).all()
+
+    # Calcular estadisticas
+    total_dias_rango = (fecha_hasta - fecha_desde).days + 1
+    dias_laborales = sum(1 for i in range(total_dias_rango)
+                        if (fecha_desde + timedelta(days=i)).weekday() < 5)
+
+    entradas = [r for r in registros if r.tipo == "entrada"]
+    salidas = [r for r in registros if r.tipo == "salida"]
+    dias_asistidos = len(set(r.fecha for r in entradas))
+    dias_faltados = max(0, dias_laborales - dias_asistidos)
+
+    # Calcular retardos
+    retardos = 0
+    registros_detalle = []
+    for r in registros:
+        es_retardo = False
+        if r.tipo == "entrada" and sucursal and sucursal.hora_entrada:
+            from datetime import time as dt_time
+            hora_limite = dt_time(
+                sucursal.hora_entrada.hour,
+                sucursal.hora_entrada.minute + tolerancia
+            ) if sucursal.hora_entrada.minute + tolerancia < 60 else dt_time(
+                sucursal.hora_entrada.hour + 1,
+                (sucursal.hora_entrada.minute + tolerancia) % 60
+            )
+            hora_registro = r.hora.replace(tzinfo=None) if r.hora.tzinfo else r.hora
+            if hora_registro > hora_limite:
+                es_retardo = True
+                retardos += 1
+
+        registros_detalle.append({
+            "id": str(r.id),
+            "fecha": r.fecha.isoformat(),
+            "hora": r.hora.strftime("%H:%M") if r.hora else None,
+            "tipo": r.tipo,
+            "confianza_match": float(r.confianza_match) if r.confianza_match else None,
+            "dentro_rango": r.dentro_rango,
+            "distancia_sucursal": float(r.distancia_sucursal) if r.distancia_sucursal else None,
+            "retardo": es_retardo,
+        })
+
+    # Horas trabajadas (aprox)
+    horas_totales = 0.0
+    fechas_con_entrada = {}
+    for r in registros:
+        if r.tipo == "entrada":
+            fechas_con_entrada[r.fecha] = r.hora
+    for r in registros:
+        if r.tipo == "salida" and r.fecha in fechas_con_entrada:
+            entrada_hora = fechas_con_entrada[r.fecha]
+            try:
+                h_entrada = entrada_hora.hour + entrada_hora.minute / 60
+                h_salida = r.hora.hour + r.hora.minute / 60
+                diff = h_salida - h_entrada
+                if diff > 0:
+                    horas_totales += diff
+            except Exception:
+                pass
+
+    return {
+        "empleado": {
+            "id": str(empleado.id),
+            "nombre": empleado.nombre_completo,
+            "numero_empleado": empleado.numero_empleado,
+            "puesto": empleado.puesto,
+            "departamento": empleado.departamento,
+        },
+        "sucursal": {
+            "nombre": sucursal.nombre if sucursal else None,
+            "hora_entrada": hora_entrada_esperada,
+            "hora_salida": hora_salida_esperada,
+            "tolerancia_minutos": tolerancia,
+        },
+        "periodo": {
+            "fecha_desde": fecha_desde.isoformat(),
+            "fecha_hasta": fecha_hasta.isoformat(),
+            "dias_laborales": dias_laborales,
+        },
+        "estadisticas": {
+            "dias_asistidos": dias_asistidos,
+            "dias_faltados": dias_faltados,
+            "total_entradas": len(entradas),
+            "total_salidas": len(salidas),
+            "retardos": retardos,
+            "horas_trabajadas": round(horas_totales, 1),
+            "promedio_horas_dia": round(horas_totales / dias_asistidos, 1) if dias_asistidos > 0 else 0,
+        },
+        "registros": registros_detalle,
+    }
+
+
+# ========================================
+# FALTAS / NOTIFICACIONES
+# ========================================
+@app.get("/api/asistencia/faltas", tags=["Reportes"])
+async def empleados_sin_entrada(
+    fecha: Optional[date] = None,
+    db: Session = Depends(get_db)
+):
+    """Empleados activos que NO han registrado entrada en la fecha dada"""
+    target_date = fecha or datetime.now().date()
+
+    # Empleados activos con biometrico
+    empleados_activos = db.query(Empleado).filter(Empleado.activo == True).all()
+
+    # IDs que SI registraron entrada hoy
+    ids_con_entrada = set(
+        r[0] for r in db.query(RegistroAsistencia.empleado_id).filter(
+            RegistroAsistencia.fecha == target_date,
+            RegistroAsistencia.tipo == "entrada"
+        ).all()
+    )
+
+    faltantes = []
+    for emp in empleados_activos:
+        if emp.id not in ids_con_entrada:
+            tiene_bio = db.query(exists().where(
+                and_(DatoBiometrico.empleado_id == emp.id, DatoBiometrico.activo == True)
+            )).scalar()
+            faltantes.append({
+                "id": str(emp.id),
+                "nombre": emp.nombre_completo,
+                "numero_empleado": emp.numero_empleado,
+                "puesto": emp.puesto,
+                "tiene_biometrico": tiene_bio,
+            })
+
+    return {
+        "fecha": target_date.isoformat(),
+        "total_activos": len(empleados_activos),
+        "con_entrada": len(ids_con_entrada),
+        "sin_entrada": len(faltantes),
+        "faltantes": faltantes,
+    }
+
+
+# ========================================
+# DASHBOARD STATS AVANZADO
+# ========================================
+@app.get("/api/dashboard/stats", tags=["Dashboard"])
+async def dashboard_stats(db: Session = Depends(get_db)):
+    """Estadisticas avanzadas para el dashboard"""
+    from sqlalchemy import func as sqlfunc
+
+    hoy = datetime.now().date()
+    inicio_semana = hoy - timedelta(days=hoy.weekday())
+    inicio_mes = hoy.replace(day=1)
+
+    # Conteos basicos
+    total_empleados = db.query(sqlfunc.count(Empleado.id)).filter(Empleado.activo == True).scalar() or 0
+    con_biometrico = db.query(sqlfunc.count(DatoBiometrico.empleado_id.distinct())).filter(
+        DatoBiometrico.activo == True
+    ).scalar() or 0
+
+    # Hoy
+    entradas_hoy = db.query(sqlfunc.count(RegistroAsistencia.id)).filter(
+        RegistroAsistencia.fecha == hoy, RegistroAsistencia.tipo == "entrada"
+    ).scalar() or 0
+    salidas_hoy = db.query(sqlfunc.count(RegistroAsistencia.id)).filter(
+        RegistroAsistencia.fecha == hoy, RegistroAsistencia.tipo == "salida"
+    ).scalar() or 0
+
+    # Esta semana
+    registros_semana = db.query(sqlfunc.count(RegistroAsistencia.id)).filter(
+        RegistroAsistencia.fecha >= inicio_semana,
+        RegistroAsistencia.fecha <= hoy
+    ).scalar() or 0
+
+    # Este mes
+    registros_mes = db.query(sqlfunc.count(RegistroAsistencia.id)).filter(
+        RegistroAsistencia.fecha >= inicio_mes,
+        RegistroAsistencia.fecha <= hoy
+    ).scalar() or 0
+
+    # Tendencia semanal (ultimos 7 dias)
+    tendencia_semanal = db.query(
+        RegistroAsistencia.fecha,
+        sqlfunc.count(RegistroAsistencia.id).label("total"),
+        sqlfunc.count(sqlfunc.distinct(RegistroAsistencia.empleado_id)).label("empleados")
+    ).filter(
+        RegistroAsistencia.fecha >= hoy - timedelta(days=6),
+        RegistroAsistencia.fecha <= hoy
+    ).group_by(RegistroAsistencia.fecha).order_by(RegistroAsistencia.fecha).all()
+
+    # Retardos hoy (empleados que entraron tarde)
+    retardos_hoy = 0
+    sucursales_cache = {}
+    entradas_hoy_list = db.query(RegistroAsistencia, Empleado).join(
+        Empleado, RegistroAsistencia.empleado_id == Empleado.id
+    ).filter(
+        RegistroAsistencia.fecha == hoy,
+        RegistroAsistencia.tipo == "entrada"
+    ).all()
+
+    for reg, emp in entradas_hoy_list:
+        if emp.sucursal_id:
+            if emp.sucursal_id not in sucursales_cache:
+                suc = db.query(Sucursal).filter(Sucursal.id == emp.sucursal_id).first()
+                sucursales_cache[emp.sucursal_id] = suc
+            suc = sucursales_cache[emp.sucursal_id]
+            if suc and suc.hora_entrada:
+                tol = suc.tolerancia_minutos or 15
+                from datetime import time as dt_time
+                mins_total = suc.hora_entrada.hour * 60 + suc.hora_entrada.minute + tol
+                hora_limite = dt_time(mins_total // 60, mins_total % 60)
+                hora_reg = reg.hora.replace(tzinfo=None) if reg.hora.tzinfo else reg.hora
+                if hora_reg > hora_limite:
+                    retardos_hoy += 1
+
+    # Faltas hoy
+    ids_con_entrada = set(
+        r[0] for r in db.query(RegistroAsistencia.empleado_id).filter(
+            RegistroAsistencia.fecha == hoy,
+            RegistroAsistencia.tipo == "entrada"
+        ).all()
+    )
+    faltas_hoy = total_empleados - len(ids_con_entrada)
+
+    return {
+        "total_empleados": total_empleados,
+        "con_biometrico": con_biometrico,
+        "hoy": {
+            "entradas": entradas_hoy,
+            "salidas": salidas_hoy,
+            "retardos": retardos_hoy,
+            "faltas": max(0, faltas_hoy),
+        },
+        "semana": {"registros": registros_semana},
+        "mes": {"registros": registros_mes},
+        "tendencia_semanal": [
+            {"fecha": row.fecha.isoformat(), "dia": row.fecha.strftime("%a"), "total": row.total, "empleados": row.empleados}
+            for row in tendencia_semanal
+        ],
     }
 
 

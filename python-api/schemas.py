@@ -151,14 +151,35 @@ class SucursalCreate(BaseModel):
     latitud: float
     longitud: float
     radio_permitido_metros: int = 100
+    hora_entrada: Optional[str] = None
+    hora_salida: Optional[str] = None
+    tolerancia_minutos: int = 15
+
+
+class SucursalUpdate(BaseModel):
+    nombre: Optional[str] = None
+    direccion: Optional[str] = None
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
+    radio_permitido_metros: Optional[int] = None
+    hora_entrada: Optional[str] = None
+    hora_salida: Optional[str] = None
+    tolerancia_minutos: Optional[int] = None
+    activo: Optional[bool] = None
 
 
 class SucursalResponse(BaseModel):
     id: UUID
+    empresa_id: Optional[UUID] = None
     nombre: str
-    latitud: float
-    longitud: float
-    radio_permitido_metros: int
+    direccion: Optional[str] = None
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
+    radio_permitido_metros: int = 100
+    hora_entrada: Optional[str] = None
+    hora_salida: Optional[str] = None
+    tolerancia_minutos: int = 15
+    activo: bool = True
     
     class Config:
         from_attributes = True

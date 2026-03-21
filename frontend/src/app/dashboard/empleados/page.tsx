@@ -176,6 +176,12 @@ export default function EmpleadosPage() {
                     )}
                   </td>
                   <td className="px-6 py-4 space-x-3">
+                    <a
+                      href={`/dashboard/empleados/${emp.id}`}
+                      className="text-purple-600 hover:text-purple-800 text-sm font-medium"
+                    >
+                      Reporte
+                    </a>
                     <button
                       onClick={() => openEdit(emp)}
                       className="text-blue-600 hover:text-blue-800 text-sm font-medium"
