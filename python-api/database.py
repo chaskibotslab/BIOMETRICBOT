@@ -43,6 +43,20 @@ def migrate_db():
             except Exception as e:
                 print(f"[MIGRATION] Skip: {e}")
         conn.commit()
+
+    # Reset admin password (TEMPORAL - eliminar despues de usar)
+    try:
+        from services.auth_service import hash_password
+        new_hash = hash_password("Admin2026!")
+        with engine.connect() as conn:
+            conn.execute(text(
+                "UPDATE usuarios_sistema SET password_hash = :h WHERE username = 'admin'"
+            ), {"h": new_hash})
+            conn.commit()
+        print("✅ Password admin reseteada a: Admin2026!")
+    except Exception as e:
+        print(f"[MIGRATION] Password reset skip: {e}")
+
     print("✅ Migraciones aplicadas")
 
 
